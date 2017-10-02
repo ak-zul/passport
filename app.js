@@ -6,11 +6,28 @@ var cookieParser = require('cookie-parser');
 var bodyParser = require('body-parser');
 
 var index = require('./routes/index');
-var passport = require('passport');
-
 var users = require('./routes/users');
-var PassportLocalStrategy = require('passport-local');
+var Mongoose = require('mongoose');
+
 var app = express();
+var session = require('express-session');
+var MongoStore = require('connect-mongo')(session);
+var passport = require('passport');
+var PassportLocalStrategy = require('passport-local');
+var Hash = require('password-hash');
+
+
+
+Mongoose.connect('mongodb://localhost/test', { useMongoClient: true, promiseLibrary: global.Promise });
+
+
+app.use(session({
+    secret: 'djhxcvxfgshjfgjhgsjhfgakjeauytsdfy', // a secret key you can write your own
+    resave: false,
+    saveUninitialized: true,
+    store: new MongoStore({ mongooseConnection: Mongoose.connection })
+}));
+
 
 // view engine setup
 app.set('views', path.join(__dirname, 'views'));
@@ -29,28 +46,38 @@ app.use(require('connect-flash')()); // see the next section
 
 
 
-app.use('/', index);
-app.use('/users', users);
 
-
-var Mongoose = require('mongoose');
-var Hash = require('password-hash');
-var passport = require('passport');
-
-
-
-var PassportLocalStrategy = require('passport-local');
 var Schema = Mongoose.Schema;
 
+var UserSchema = new Schema({
+    email: { type: String },
+    password: { type: String}
+});
 
+UserSchema.statics.authenticate = function(email, password, callback) {
+    this.findOne({ email: email}, function(error, user) {
+        if (user  &&  (Hash.verify(password, user.password))) {
+            callback(null, user);
+        } else if (user || !error) {
+            // Email or password was invalid (no MongoDB error)
+            error = new Error("Your email address or password is invalid. Please try again.");
+            callback(error, null);
+        } else {
+            // Something bad happened with MongoDB. You shouldn't run into this often.
+            callback(error, null);
+        }
+    });
+};
 
-Mongoose.connect('mongodb://localhost/test', { useMongoClient: true, promiseLibrary: global.Promise });
+var Users = Mongoose.model('Users', UserSchema);
+
+// Mongoose.connect('mongodb://localhost/test', { useMongoClient: true, promiseLibrary: global.Promise });
 
 var authStrategy = new PassportLocalStrategy({
     usernameField: 'email',
     passwordField: 'password'
 }, function(email, password, done) {
-    User.authenticate(email, password, function(error, user){
+    Users.authenticate(email, password, function(error, user){
         // You can write any kind of message you'd like.
         // The message will be displayed on the next page the user visits.
         // We're currently not displaying any success message for logging in.
@@ -63,7 +90,7 @@ var authSerializer = function(user, done) {
 };
 
 var authDeserializer = function(id, done) {
-    User.findById(id, function(error, user) {
+    Users.findById(id, function(error, user) {
         done(error, user);
     });
 };
@@ -71,23 +98,28 @@ var authDeserializer = function(id, done) {
 passport.use(authStrategy);
 passport.serializeUser(authSerializer);
 passport.deserializeUser(authDeserializer);
+app.use(passport.initialize());
+app.use(passport.session());
+
+app.use('/', index);
+app.use('/users', users);
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {
-  var err = new Error('Not Found');
-  err.status = 404;
-  next(err);
+    var err = new Error('Not Found');
+    err.status = 404;
+    next(err);
 });
 
 // error handler
 app.use(function(err, req, res, next) {
-  // set locals, only providing error in development
-  res.locals.message = err.message;
-  res.locals.error = req.app.get('env') === 'development' ? err : {};
+    // set locals, only providing error in development
+    res.locals.message = err.message;
+    res.locals.error = req.app.get('env') === 'development' ? err : {};
 
-  // render the error page
-  res.status(err.status || 500);
-  res.render('error');
+    // render the error page
+    res.status(err.status || 500);
+    res.render('error');
 });
 
 module.exports = app;
